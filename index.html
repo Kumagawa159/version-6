@@ -595,8 +595,7 @@ function patchSDP(sdp){
   // Injecter bitrate élevé après m=video
   const bAS=Math.round(q.maxBps/1000);
   const bTIAS=Math.round(q.maxBps);
-  sdp=sdp.replace(/(m=video[^\r\n]*\r\n)(c=[^\r\n]*\r\n)?/,
-    (m,mv,cv)=>(cv||'')+mv+(cv?'':'')+'b=AS:'+bAS+'\r\nb=TIAS:'+bTIAS+'\r\n');
+  sdp=sdp.replace('m=video', 'b=AS:'+bAS+'\r\nb=TIAS:'+bTIAS+'\r\nm=video');
 
   // Forcer max-fs (macroblocks 4K) et max-fr dans les fmtp
   const maxFS=Math.ceil((q.w*q.h)/256)+100;
