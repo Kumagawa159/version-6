@@ -352,97 +352,100 @@ select:focus{outline:none;border-color:var(--accent)}
 <div class="toast" id="toast"></div>
 
 <script>
-/* ══ Config ══ */
+/* ══ Config qualité ══ */
 const QUALITY={
-  hd: {w:1920,h:1080,fps:30, bps:8e6,  maxBps:12e6, label:'HD 1080p'},
-  '2k':{w:2560,h:1440,fps:60,bps:20e6, maxBps:30e6, label:'2K 60fps'},
-  '4k':{w:3840,h:2160,fps:60,bps:40e6, maxBps:60e6, label:'4K 60fps'},
+  hd: {w:1920,h:1080,fps:30, maxBps:15e6,  label:'HD 1080p'},
+  '2k':{w:2560,h:1440,fps:60,maxBps:30e6,  label:'2K 60fps'},
+  '4k':{w:3840,h:2160,fps:60,maxBps:80e6,  label:'4K 60fps'},
 };
 
+/* PeerJS = signalisation uniquement (échange SDP + ICE)
+   RTCPeerConnection natif = vidéo 4K sans limitation */
+const PEER_CFG={
+  host:'0.peerjs.com',port:443,path:'/',secure:true,
+  debug:0,
+  config:{iceServers:[
+    {urls:'stun:stun.l.google.com:19302'},
+    {urls:'stun:stun1.l.google.com:19302'},
+    {urls:'stun:stun2.l.google.com:19302'},
+  ]}
+};
+const RTC_CFG={iceServers:[
+  {urls:'stun:stun.l.google.com:19302'},
+  {urls:'stun:stun1.l.google.com:19302'},
+  {urls:'stun:stun2.l.google.com:19302'},
+]};
+
 /* ══ State ══ */
-let peer=null, conn=null, mediaConn=null;
-let localStream=null, audioStream=null, audioCtx=null, meterTimer=null, statsTimer=null;
+let peer=null, sigConn=null;     // PeerJS signaling only
+let pc=null;                      // Native RTCPeerConnection for video
+let localStream=null, audioStream=null, audioCtx=null;
+let meterTimer=null, statsTimer=null;
 let audioSrc='mic', quality='2k', role='host';
 let lbR=0,lbS=0,ltS=0, roomCode=null;
-
-/* ══ Generate 6-digit code ══ */
-function genCode(){ return String(Math.floor(100000+Math.random()*900000)); }
 
 /* ══ Pages ══ */
 function showPage(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
   document.getElementById(id).classList.add('on');
 }
-
 function goHome(){
   endSession();
   showPage('page-home');
   document.getElementById('host-code-display').style.display='none';
   document.getElementById('btn-create').style.display='flex';
+  document.getElementById('btn-create').disabled=false;
+  document.getElementById('btn-create').textContent='Créer une session';
   document.getElementById('guest-conn-badge').style.display='none';
   document.getElementById('guest-code-input').value='';
   roomCode=null;
 }
 
-/* ══ HOST — Create session ══ */
+/* ══ Générer code 6 chiffres ══ */
+function genCode(){ return String(Math.floor(100000+Math.random()*900000)); }
+
+/* ══════════════════════════════════
+   HOST FLOW
+══════════════════════════════════ */
 async function createSession(){
   document.getElementById('btn-create').disabled=true;
   document.getElementById('btn-create').textContent='Connexion…';
-
   roomCode=genCode();
 
-  // Init PeerJS avec le code comme ID
-  peer=new Peer('ps-'+roomCode, {
-    host:'0.peerjs.com', port:443, path:'/', secure:true,
-    config:{iceServers:[
-      {urls:'stun:stun.l.google.com:19302'},
-      {urls:'stun:stun1.l.google.com:19302'},
-    ]}
-  });
+  peer=new Peer('ps-'+roomCode, PEER_CFG);
 
-  peer.on('open', ()=>{
-    // Afficher le code
+  peer.on('open',()=>{
     document.getElementById('host-code-value').textContent=roomCode;
     document.getElementById('host-code-display').style.display='block';
     document.getElementById('btn-create').style.display='none';
-    toast('Session créée — en attente de l\'invité');
+    toast('Session créée — partagez le code');
   });
 
   peer.on('error', e=>{
-    if(e.type==='unavailable-id'){
-      // Code déjà pris — en regénérer un
-      peer.destroy();
-      createSession();
-    } else {
-      toast('Erreur : '+e.message);
-      document.getElementById('btn-create').disabled=false;
-      document.getElementById('btn-create').textContent='Créer une session';
-    }
+    if(e.type==='unavailable-id'){peer.destroy();createSession();return;}
+    toast('Erreur PeerJS : '+e.type);
+    document.getElementById('btn-create').disabled=false;
+    document.getElementById('btn-create').textContent='Créer une session';
   });
 
-  // L'invité appelle l'hôte avec un media call
-  peer.on('call', call=>{
-    mediaConn=call;
-    call.answer(); // répondre sans flux (l'hôte envoie, l'invité reçoit)
-    call.on('stream', remoteStream=>{
-      // L'hôte ne reçoit rien normalement, mais au cas où
-    });
-    call.on('close',()=>setStatus('r','Déconnecté'));
-    call.on('error', e=>setStatus('r','Erreur'));
-  });
-
-  // Canal data pour signaux de contrôle
+  // L'invité se connecte via data channel → on crée la RTCPeerConnection native
   peer.on('connection', c=>{
-    conn=c;
+    sigConn=c;
     c.on('open',()=>{
       document.getElementById('hwdot').className='sdot g';
       document.getElementById('hwlbl').textContent='Invité connecté !';
       toast('✅ Invité connecté !');
-      // Passer en page session
       role='host';
       goToSession();
     });
-    c.on('data', d=>handleData(d));
+    // Recevoir les messages de signalisation (answer + ICE candidates)
+    c.on('data', async msg=>{
+      if(msg.type==='answer'){
+        await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      } else if(msg.type==='ice'){
+        try{ await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); }catch(e){}
+      }
+    });
     c.on('close',()=>setStatus('r','Déconnecté'));
   });
 }
@@ -451,211 +454,254 @@ function copyRoomCode(){
   navigator.clipboard.writeText(roomCode).then(()=>toast('✅ Code copié !'));
 }
 
-/* ══ GUEST — Join session ══ */
-function joinSession(){
-  const code=document.getElementById('guest-code-input').value.trim();
-  if(code.length!==6){toast('Entrez un code à 6 chiffres');return}
-
-  document.getElementById('guest-conn-badge').style.display='inline-flex';
-  document.getElementById('gcdot').className='sdot y';
-  document.getElementById('gclbl').textContent='Connexion…';
-
-  peer=new Peer({
-    host:'0.peerjs.com', port:443, path:'/', secure:true,
-    config:{iceServers:[
-      {urls:'stun:stun.l.google.com:19302'},
-      {urls:'stun:stun1.l.google.com:19302'},
-    ]}
-  });
-
-  peer.on('open', guestId=>{
-    // Ouvrir canal data
-    conn=peer.connect('ps-'+code, {reliable:true});
-    conn.on('open',()=>{
-      document.getElementById('gcdot').className='sdot g';
-      document.getElementById('gclbl').textContent='Connecté !';
-      role='guest';
-      roomCode=code;
-      goToSession();
-      toast('✅ Connecté à la session');
-    });
-    conn.on('data', d=>handleData(d));
-    conn.on('error', e=>toast('Erreur connexion : '+e));
-
-    // Recevoir le flux vidéo de l'hôte
-    peer.on('call', call=>{
-      mediaConn=call;
-      call.answer();
-      call.on('stream', remote=>{
-        const rv=document.getElementById('rv');
-        rv.srcObject=remote;
-        document.getElementById('re').style.display='none';
-        document.getElementById('rovl').style.display='block';
-        setStatus('g','Flux reçu');
-        document.getElementById('btn-disc').disabled=false;
-        startStats();
-        const ha=remote.getAudioTracks().length>0;
-        const ael=document.getElementById('i-audio');
-        ael.textContent=ha?'✓ Oui':'✗ Non';ael.className='sv'+(ha?' ok':'');
-      });
-      call.on('close',()=>setStatus('r','Déconnecté'));
-    });
-  });
-
-  peer.on('error', e=>{
-    if(e.type==='peer-unavailable'){
-      toast('Code invalide ou session expirée');
-      document.getElementById('gcdot').className='sdot r';
-      document.getElementById('gclbl').textContent='Introuvable';
-    } else {
-      toast('Erreur : '+e.message);
-    }
-  });
-}
-
-/* ══ Go to session page ══ */
-function goToSession(){
-  showPage('page-session');
-  document.getElementById('sess-label').textContent=role==='host'?`Hôte · Code ${roomCode}`:`Invité · Session ${roomCode}`;
-  document.getElementById('host-panel').style.display=role==='host'?'block':'none';
-  if(role==='host'){
-    setStatus('g','Invité connecté');
-    document.getElementById('btn-disc').disabled=false;
-    loadMics();
-  }
-  document.getElementById('i-q').textContent=QUALITY[quality].label;
-}
-
-/* ══ HOST — Start sharing ══ */
 async function startShare(){
   stopMicMeter();
-  setStatus('y','Sélection de l\'écran…');
+  setStatus('y','Sélection de l'écran…');
   try{
     localStream=await captureMedia();
     attachLocal(localStream);
 
-    if(peer && conn){
-      mediaConn=peer.call(conn.peer, localStream);
-      mediaConn.on('error', e=>toast('Erreur flux : '+e));
+    // Créer RTCPeerConnection natif — on contrôle 100% du SDP
+    pc=new RTCPeerConnection(RTC_CFG);
 
-      // Intercepter le SDP dès que la PeerConnection est créée
-      // pour forcer la résolution et le bitrate avant négociation
-      patchPeerConnection(mediaConn);
+    // Ajouter les pistes
+    localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
 
-      setStatus('g','Partage en cours');
-      startStats();
-      document.getElementById('btn-disc').disabled=false;
-    }
+    // Envoyer les ICE candidates à l'invité via PeerJS data channel
+    pc.onicecandidate=e=>{
+      if(e.candidate && sigConn?.open)
+        sigConn.send({type:'ice', candidate:e.candidate.toJSON()});
+    };
+
+    pc.onconnectionstatechange=()=>{
+      if(pc.connectionState==='connected'){
+        setStatus('g','Connecté — partage en cours');
+        applyEncoder();
+        // Réappliquer après délai Chrome
+        setTimeout(applyEncoder,1500);
+        setTimeout(applyEncoder,4000);
+      }
+      if(['disconnected','closed','failed'].includes(pc.connectionState))
+        setStatus('r','Déconnecté');
+    };
+
+    // Créer l'offre SDP et la patcher avant envoi
+    const offer=await pc.createOffer();
+    const patchedSDP=patchSDP(offer.sdp);
+    await pc.setLocalDescription({type:'offer', sdp:patchedSDP});
+
+    // Envoyer l'offre patchée à l'invité
+    sigConn.send({type:'offer', sdp:{type:'offer', sdp:patchedSDP}});
+    setStatus('y','Offre envoyée — en attente de l'invité…');
+    startStats();
   }catch(err){
-    setStatus('r', friendlyErr(err));
+    setStatus('r',friendlyErr(err));
     toast(friendlyErr(err));
     startMicMeter();
   }
 }
 
-/* ══ Patch PeerConnection — force 4K dans le SDP ══ */
-function patchPeerConnection(mc){
-  // Attendre que PeerJS crée le RTCPeerConnection interne
-  const waitPC=setInterval(()=>{
-    const pc=mc.peerConnection;
-    if(!pc) return;
-    clearInterval(waitPC);
+/* ══════════════════════════════════
+   GUEST FLOW
+══════════════════════════════════ */
+function joinSession(){
+  const code=document.getElementById('guest-code-input').value.trim();
+  if(code.length!==6){toast('Entrez un code à 6 chiffres');return;}
 
-    // 1. Intercepter createOffer/createAnswer pour modifier le SDP
-    const origSetLD=pc.setLocalDescription.bind(pc);
-    pc.setLocalDescription=async(desc)=>{
-      if(desc && desc.sdp){
-        desc=new RTCSessionDescription({type:desc.type, sdp:patchSDP(desc.sdp)});
-      }
-      return origSetLD(desc);
-    };
+  document.getElementById('guest-conn-badge').style.display='inline-flex';
+  document.getElementById('gcdot').className='sdot y';
+  document.getElementById('gclbl').textContent='Connexion…';
 
-    // 2. Appliquer les contraintes sur la piste vidéo capturée
-    const q=QUALITY[quality];
-    if(localStream){
-      const vt=localStream.getVideoTracks()[0];
-      if(vt){
-        vt.applyConstraints({
-          width:{ideal:q.w,max:q.w},
-          height:{ideal:q.h,max:q.h},
-          frameRate:{ideal:q.fps,max:q.fps}
-        }).catch(()=>{});
-      }
-    }
+  peer=new Peer(PEER_CFG);
 
-    // 3. Forcer les paramètres d'encodage dès que la connexion est établie
-    pc.addEventListener('connectionstatechange',()=>{
-      if(pc.connectionState==='connected'){
-        applyEncoderOnPC(pc);
-        // Réappliquer après 1s et 3s pour être sûr
-        setTimeout(()=>applyEncoderOnPC(pc),1000);
-        setTimeout(()=>applyEncoderOnPC(pc),3000);
+  peer.on('open',()=>{
+    // Ouvrir data channel vers l'hôte
+    sigConn=peer.connect('ps-'+code,{reliable:true});
+    sigConn.on('open',()=>{
+      document.getElementById('gcdot').className='sdot g';
+      document.getElementById('gclbl').textContent='Connecté !';
+      role='guest'; roomCode=code;
+      goToSession();
+      toast('✅ Connecté à la session');
+    });
+
+    // Recevoir offre + ICE de l'hôte
+    sigConn.on('data', async msg=>{
+      if(msg.type==='offer'){
+        await guestHandleOffer(msg.sdp);
+      } else if(msg.type==='ice'){
+        try{ await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); }catch(e){}
       }
     });
-  },50);
-}
-
-/* ══ Modifier le SDP pour forcer haute résolution ══ */
-function patchSDP(sdp){
-  const q=QUALITY[quality];
-  // Supprimer les lignes b=AS et b=TIAS existantes (bitrate limité par PeerJS)
-  sdp=sdp.replace(/b=AS:[0-9]+\r\n/g,'');
-  sdp=sdp.replace(/b=TIAS:[0-9]+\r\n/g,'');
-
-  // Injecter le bitrate max après la ligne m=video
-  const bAS=Math.round(q.maxBps/1000); // kbps
-  const bTIAS=q.maxBps; // bps
-  sdp=sdp.replace(/(m=video[^\r\n]*\r\n)/,(match)=>{
-    return match+`b=AS:${bAS}\r\nb=TIAS:${bTIAS}\r\n`;
+    sigConn.on('error',e=>toast('Erreur : '+e));
   });
 
-  // Ajouter max-fr et max-fs dans les fmtp pour VP8/VP9/H264
-  // max-fs = macroblocks (4K = 3840*2160/256 = 32400)
-  const maxFS=Math.ceil((q.w*q.h)/256);
-  const maxFR=q.fps;
-  sdp=sdp.replace(/(a=fmtp:\d+ )(.*)/g,(match,prefix,params)=>{
-    if(params.includes('max-fs')){
-      params=params.replace(/max-fs=\d+/,`max-fs=${maxFS}`);
-    } else {
-      params+=`;max-fs=${maxFS}`;
+  peer.on('error',e=>{
+    if(e.type==='peer-unavailable'){
+      toast('Code invalide ou expiré');
+      document.getElementById('gcdot').className='sdot r';
+      document.getElementById('gclbl').textContent='Introuvable';
+    } else toast('Erreur : '+e.type);
+  });
+}
+
+async function guestHandleOffer(offerSdp){
+  // Créer RTCPeerConnection natif côté invité
+  pc=new RTCPeerConnection(RTC_CFG);
+
+  pc.ontrack=e=>{
+    const rv=document.getElementById('rv');
+    rv.srcObject=e.streams[0];
+    document.getElementById('re').style.display='none';
+    document.getElementById('rovl').style.display='block';
+    setStatus('g','Flux reçu');
+    document.getElementById('btn-disc').disabled=false;
+    startStats();
+    const ha=e.streams[0].getAudioTracks().length>0;
+    const ael=document.getElementById('i-audio');
+    ael.textContent=ha?'✓ Oui':'✗ Non'; ael.className='sv'+(ha?' ok':'');
+  };
+
+  // Envoyer ICE candidates à l'hôte
+  pc.onicecandidate=e=>{
+    if(e.candidate && sigConn?.open)
+      sigConn.send({type:'ice', candidate:e.candidate.toJSON()});
+  };
+
+  pc.onconnectionstatechange=()=>{
+    if(pc.connectionState==='connected') setStatus('g','Connecté');
+    if(['disconnected','closed','failed'].includes(pc.connectionState))
+      setStatus('r','Déconnecté');
+  };
+
+  await pc.setRemoteDescription(new RTCSessionDescription(offerSdp));
+  const answer=await pc.createAnswer();
+  const patchedSDP=patchSDP(answer.sdp);
+  await pc.setLocalDescription({type:'answer', sdp:patchedSDP});
+
+  // Renvoyer la réponse patchée à l'hôte
+  sigConn.send({type:'answer', sdp:{type:'answer', sdp:patchedSDP}});
+}
+
+/* ══ Modifier le SDP — supprimer les limites de bitrate ══ */
+function patchSDP(sdp){
+  const q=QUALITY[quality];
+
+  // Supprimer TOUTES les lignes de bitrate limitantes
+  sdp=sdp.replace(/b=AS:[0-9]+\r\n/g,'');
+  sdp=sdp.replace(/b=TIAS:[0-9]+\r\n/g,'');
+  sdp=sdp.replace(/b=CT:[0-9]+\r\n/g,'');
+
+  // Injecter bitrate élevé après m=video
+  const bAS=Math.round(q.maxBps/1000);
+  const bTIAS=Math.round(q.maxBps);
+  sdp=sdp.replace(/(m=video[^\r\n]*\r\n)(c=[^\r\n]*\r\n)?/,
+    (m,mv,cv)=>(cv||'')+mv+(cv?'':'')+'b=AS:'+bAS+'\r\nb=TIAS:'+bTIAS+'\r\n');
+
+  // Forcer max-fs (macroblocks 4K) et max-fr dans les fmtp
+  const maxFS=Math.ceil((q.w*q.h)/256)+100;
+  sdp=sdp.replace(/(a=fmtp:(\d+) .*)/g,(line)=>{
+    if(!line.includes('apt=')){ // ne pas toucher les lignes apt=
+      if(line.includes('max-fs')) line=line.replace(/max-fs=\d+/,'max-fs='+maxFS);
+      else line+=';max-fs='+maxFS;
+      if(line.includes('max-fr')) line=line.replace(/max-fr=\d+/,'max-fr='+q.fps);
+      else line+=';max-fr='+q.fps;
     }
-    if(params.includes('max-fr')){
-      params=params.replace(/max-fr=\d+/,`max-fr=${maxFR}`);
-    } else {
-      params+=`;max-fr=${maxFR}`;
-    }
-    return prefix+params;
+    return line;
   });
 
   return sdp;
 }
 
-/* ══ Forcer les paramètres d'encodage sur un RTCPeerConnection ══ */
-async function applyEncoderOnPC(pc){
+/* ══ Forcer l'encodeur après connexion ══ */
+async function applyEncoder(){
+  if(!pc) return;
   const q=QUALITY[quality];
   for(const sender of pc.getSenders()){
     if(!sender.track||sender.track.kind!=='video') continue;
     try{
-      const params=sender.getParameters();
-      if(!params.encodings||params.encodings.length===0) params.encodings=[{}];
-      params.encodings[0].maxBitrate    = q.maxBps;
-      params.encodings[0].maxFramerate  = q.fps;
-      params.encodings[0].networkPriority = 'high';
-      params.encodings[0].priority       = 'high';
-      // Ne pas mettre minBitrate — certains navigateurs rejettent
-      if('degradationPreference' in params){
-        params.degradationPreference = 'maintain-framerate';
-      }
-      await sender.setParameters(params);
-
-      // Forcer aussi les contraintes sur la piste elle-même
-      await sender.track.applyConstraints({
-        width:{ideal:q.w,max:q.w},
-        height:{ideal:q.h,max:q.h},
-        frameRate:{ideal:q.fps,max:q.fps}
-      }).catch(()=>{});
+      const p=sender.getParameters();
+      if(!p.encodings?.length) p.encodings=[{}];
+      p.encodings[0].maxBitrate=q.maxBps;
+      p.encodings[0].maxFramerate=q.fps;
+      p.encodings[0].networkPriority='high';
+      p.encodings[0].priority='high';
+      if(p.degradationPreference!==undefined)
+        p.degradationPreference='maintain-framerate';
+      await sender.setParameters(p);
     }catch(e){}
   }
+}
+
+/* ══ Go to session page ══ */
+function goToSession(){
+  showPage('page-session');
+  document.getElementById('sess-label').textContent=
+    role==='host'?`Hôte · Code ${roomCode}`:`Invité · Session ${roomCode}`;
+  document.getElementById('host-panel').style.display=role==='host'?'block':'none';
+  if(role==='host'){setStatus('g','Invité connecté');document.getElementById('btn-disc').disabled=false;loadMics();}
+  document.getElementById('i-q').textContent=QUALITY[quality].label;
+}
+
+/* ══ Capture 4K ══ */
+async function captureMedia(){
+  const q=QUALITY[quality];
+  const isChrome=navigator.userAgent.includes('Chrome');
+  const videoStream=await navigator.mediaDevices.getDisplayMedia({
+    video:{
+      width:{ideal:q.w,max:q.w},
+      height:{ideal:q.h,max:q.h},
+      frameRate:{ideal:q.fps,max:q.fps},
+      cursor:'always',
+      ...(isChrome?{displaySurface:'monitor'}:{})
+    },
+    audio:audioSrc==='tab'
+  });
+
+  let audioTrack=null;
+  if(audioSrc==='tab'){
+    const at=videoStream.getAudioTracks();
+    if(at.length>0){audioTrack=at[0];toast('✅ Audio onglet capturé');}
+    else toast('⚠️ Cochez "Partager l'audio de l'onglet"');
+  }else{
+    try{
+      const micId=document.getElementById('mic-sel')?.value;
+      const ms=await navigator.mediaDevices.getUserMedia({
+        audio:micId
+          ?{deviceId:{exact:micId},echoCancellation:false,noiseSuppression:false,autoGainControl:false,sampleRate:48000}
+          :{echoCancellation:false,noiseSuppression:false}
+      });
+      audioTrack=ms.getAudioTracks()[0];
+      toast('✅ '+(audioTrack.label||'Audio capturé'));
+    }catch(e){toast('⚠️ Audio : '+e.message);}
+  }
+
+  const combined=new MediaStream();
+  videoStream.getVideoTracks().forEach(t=>combined.addTrack(t));
+  if(audioTrack) combined.addTrack(audioTrack);
+  return combined;
+}
+
+/* ══ Attach local video ══ */
+function attachLocal(stream){
+  document.getElementById('lv').srcObject=stream;
+  document.getElementById('le').style.display='none';
+  document.getElementById('btn-stop').disabled=false;
+  document.getElementById('btn-share').disabled=true;
+  const vt=stream.getVideoTracks()[0];
+  if(vt){
+    vt.onended=stopShare;
+    // Afficher résolution réelle après stabilisation
+    setTimeout(()=>{
+      const s=vt.getSettings();
+      const ovl=document.getElementById('lovl');
+      ovl.textContent=(s.width||'?')+'×'+(s.height||'?')+' · '+(Math.round(s.frameRate)||'?')+'fps';
+      ovl.style.display='block';
+    },800);
+  }
+  const ha=stream.getAudioTracks().length>0;
+  document.getElementById('i-audio').textContent=ha?'✓ Oui':'✗ Non';
+  document.getElementById('i-audio').className='sv'+(ha?' ok':'');
 }
 
 function stopShare(){
@@ -669,83 +715,12 @@ function stopShare(){
   startMicMeter();
 }
 
-/* ══ Capture 4K ══ */
-async function captureMedia(){
-  const q=QUALITY[quality];
-  const isChrome=navigator.userAgent.includes('Chrome');
-  const videoStream=await navigator.mediaDevices.getDisplayMedia({
-    video:{
-      width:{ideal:q.w,max:q.w},height:{ideal:q.h,max:q.h},
-      frameRate:{ideal:q.fps,max:q.fps},cursor:'always',
-      ...(isChrome?{displaySurface:'monitor',resizeMode:'none'}:{})
-    },
-    audio:audioSrc==='tab'
-  });
-
-  let audioTrack=null;
-  if(audioSrc==='tab'){
-    const at=videoStream.getAudioTracks();
-    if(at.length>0){audioTrack=at[0];toast('✅ Audio onglet capturé');}
-    else toast('⚠️ Cochez "Partager l\'audio de l\'onglet"');
-  }else{
-    try{
-      const micId=document.getElementById('mic-sel')?.value;
-      const ms=await navigator.mediaDevices.getUserMedia({
-        audio:micId?{deviceId:{exact:micId},echoCancellation:false,noiseSuppression:false,autoGainControl:false,sampleRate:48000,channelCount:2}:{echoCancellation:false,noiseSuppression:false}
-      });
-      audioTrack=ms.getAudioTracks()[0];
-      toast('✅ '+(audioTrack.label||'Audio capturé'));
-    }catch(e){toast('⚠️ Audio : '+e.message);}
-  }
-
-  const combined=new MediaStream();
-  videoStream.getVideoTracks().forEach(t=>combined.addTrack(t));
-  if(audioTrack) combined.addTrack(audioTrack);
-  return combined;
-}
-
-/* ══ Encoder params ══ */
-async function applyEncoder(){
-  if(mediaConn?.peerConnection) applyEncoderOnPC(mediaConn.peerConnection);
-}
-
-/* ══ Attach local video ══ */
-function attachLocal(stream){
-  document.getElementById('lv').srcObject=stream;
-  document.getElementById('le').style.display='none';
-  document.getElementById('btn-stop').disabled=false;
-  document.getElementById('btn-share').disabled=true;
-  const vt=stream.getVideoTracks()[0];
-  if(vt){
-    vt.onended=stopShare;
-    setTimeout(()=>{
-      const s=vt.getSettings();
-      const ovl=document.getElementById('lovl');
-      ovl.textContent=(s.width||'?')+'×'+(s.height||'?')+' · '+(Math.round(s.frameRate)||'?')+'fps';
-      ovl.style.display='block';
-    },600);
-  }
-  const ha=stream.getAudioTracks().length>0;
-  document.getElementById('i-audio').textContent=ha?'✓ Oui':'✗ Non';
-  document.getElementById('i-audio').className='sv'+(ha?' ok':'');
-}
-
 /* ══ Quality ══ */
 function setQ(q){
   quality=q;
   ['hd','2k','4k'].forEach(k=>document.getElementById('q-'+k).classList.toggle('active',k===q));
   document.getElementById('i-q').textContent=QUALITY[q].label;
-  const qc=QUALITY[q];
-  // Appliquer sur la piste live si déjà en partage
-  if(localStream){
-    const vt=localStream.getVideoTracks()[0];
-    if(vt) vt.applyConstraints({
-      width:{ideal:qc.w,max:qc.w},
-      height:{ideal:qc.h,max:qc.h},
-      frameRate:{ideal:qc.fps,max:qc.fps}
-    }).catch(()=>{});
-  }
-  if(mediaConn?.peerConnection) applyEncoderOnPC(mediaConn.peerConnection);
+  if(pc) applyEncoder();
 }
 
 /* ══ Audio ══ */
@@ -807,8 +782,8 @@ function endSession(){
   clearInterval(statsTimer);
   stopShare();
   stopMicMeter();
-  if(mediaConn){mediaConn.close();mediaConn=null;}
-  if(conn){conn.close();conn=null;}
+  if(pc){pc.close();pc=null;}
+  if(sigConn){sigConn.close();sigConn=null;}
   if(peer){peer.destroy();peer=null;}
   document.getElementById('rv').srcObject=null;
   document.getElementById('re').style.display='flex';
@@ -820,17 +795,11 @@ function endSession(){
   setStatus('','Déconnecté');
 }
 
-/* ══ Data channel ══ */
-function handleData(d){
-  if(d.type==='ping') conn?.send({type:'pong'});
-}
-
 /* ══ Stats ══ */
 function startStats(){
   clearInterval(statsTimer);ltS=performance.now();
-  const pc=mediaConn?.peerConnection;
-  if(!pc) return;
   statsTimer=setInterval(async()=>{
+    if(!pc||pc.connectionState==='closed') return;
     const now=performance.now(),dt=(now-ltS)/1000;ltS=now;
     const stats=await pc.getStats();
     stats.forEach(r=>{
@@ -871,7 +840,9 @@ function openFSO(src){
 function closeFS(){
   document.getElementById('fso').classList.remove('on');document.body.style.overflow='';document.getElementById('fsv').srcObject=null;
 }
-window.addEventListener('orientationchange',()=>{if(document.getElementById('fso').classList.contains('on')&&window.orientation===0)closeFS();});
+window.addEventListener('orientationchange',()=>{
+  if(document.getElementById('fso').classList.contains('on')&&window.orientation===0)closeFS();
+});
 
 /* ══ Helpers ══ */
 function setStatus(c,t){document.getElementById('dot').className='sdot'+(c?' '+c:'');document.getElementById('stxt').textContent=t;}
