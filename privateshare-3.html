@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>PrivateShare</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d0d10;--s1:#16161a;--s2:#1e1e24;--s3:#25252d;
+  --b:rgba(255,255,255,0.07);--bh:rgba(255,255,255,0.14);
+  --accent:#7c6af7;--adim:rgba(124,106,247,0.15);--aglow:rgba(124,106,247,0.28);
+  --green:#22c55e;--gdim:rgba(34,197,94,0.12);
+  --yellow:#f59e0b;--red:#ef4444;
+  --t:#f0f0f4;--t2:#9090a0;--t3:#55556a;
+  --mono:'JetBrains Mono',monospace;--sans:'Inter',sans-serif;
+  --r:10px;--rl:14px;
+}
+html{background:var(--bg);color:var(--t);font-family:var(--sans);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+body{min-height:100vh;min-height:100dvh}
+.shell{max-width:900px;margin:0 auto;padding:2rem 1.25rem 4rem}
+
+/* Header */
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:2.5rem;flex-wrap:wrap;gap:.75rem}
+.brand{display:flex;align-items:center;gap:11px}
+.bi{width:38px;height:38px;border-radius:9px;background:var(--adim);border:1px solid var(--aglow);display:flex;align-items:center;justify-content:center}
+.bi svg{width:20px;height:20px;stroke:var(--accent);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.bn{font-size:16px;font-weight:600;letter-spacing:-0.02em}.bn span{color:var(--accent)}
+.ppill{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--green);background:var(--gdim);border:1px solid rgba(34,197,94,0.2);border-radius:99px;padding:3px 10px}
+.ppill svg{width:12px;height:12px;stroke:var(--green);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:42px;padding:0 18px;border-radius:var(--r);border:1px solid var(--b);background:transparent;color:var(--t);font-size:13px;font-family:var(--sans);cursor:pointer;transition:all .15s;white-space:nowrap}
+.btn:hover:not(:disabled){background:var(--s2);border-color:var(--bh)}
+.btn:active:not(:disabled){transform:scale(.97)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.bta{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
+.bta:hover:not(:disabled){background:#6058d0 !important;border-color:#6058d0 !important}
+.btf{width:100%}
+.btd{background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.3);color:var(--red)}
+.btd:hover:not(:disabled){background:rgba(239,68,68,.2) !important}
+.btsm{height:32px;padding:0 12px;font-size:12px}
+.card{background:var(--s1);border:1px solid var(--b);border-radius:var(--rl);padding:1.4rem}
+.lbl{font-size:12px;color:var(--t3);margin-bottom:6px}
+.row{display:flex;gap:8px;align-items:center}
+.sp{flex:1}
+.mt8{margin-top:8px}.mt12{margin-top:12px}.mt16{margin-top:16px}
+.dvd{height:1px;background:var(--b);margin:1rem 0}
+
+/* Pages */
+.page{display:none}.page.on{display:block}
+
+/* ══ HOME ══ */
+.home-wrap{display:flex;flex-direction:column;align-items:center;gap:1rem;padding:1rem 0 2rem;text-align:center}
+.home-wrap h1{font-size:28px;font-weight:600;letter-spacing:-0.03em;line-height:1.2}
+.home-wrap h1 span{color:var(--accent)}
+.home-wrap .sub{font-size:14px;color:var(--t2);max-width:340px;margin:0 auto}
+
+/* Two-column cards */
+.home-cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;width:100%;max-width:640px;margin-top:.5rem}
+@media(max-width:520px){.home-cols{grid-template-columns:1fr}}
+.home-card{background:var(--s1);border:1px solid var(--b);border-radius:var(--rl);padding:1.5rem;display:flex;flex-direction:column;gap:1rem}
+.home-card-title{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500}
+.home-card-title svg{width:18px;height:18px;stroke:var(--accent);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.home-card p{font-size:12px;color:var(--t2);line-height:1.6}
+
+/* Room code display */
+.room-code{text-align:center;padding:1.25rem;background:var(--s2);border-radius:var(--r);border:1px solid var(--b)}
+.room-code .label{font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.6rem}
+.room-code .code{font-family:var(--mono);font-size:32px;font-weight:500;color:var(--t);letter-spacing:.15em}
+.room-code .hint{font-size:11px;color:var(--t3);margin-top:.5rem}
+
+/* Input */
+.inp{width:100%;height:42px;background:var(--s2);border:1px solid var(--b);border-radius:var(--r);color:var(--t);font-family:var(--sans);font-size:14px;padding:0 14px;transition:border .15s;text-transform:uppercase;letter-spacing:.1em;text-align:center}
+.inp:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--adim)}
+.inp::placeholder{color:var(--t3);text-transform:none;letter-spacing:0}
+
+/* Status badge */
+.sbadge{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:5px 12px;border-radius:99px;border:1px solid var(--b)}
+.sbadge .sdot{width:7px;height:7px;border-radius:50%;background:var(--t3);flex-shrink:0}
+.sbadge .sdot.g{background:var(--green);box-shadow:0 0 5px var(--green)}
+.sbadge .sdot.y{background:var(--yellow);animation:blink 1s infinite}
+.sbadge .sdot.r{background:var(--red)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ══ SESSION ══ */
+.sess-header{display:flex;align-items:center;gap:10px;margin-bottom:1.25rem;flex-wrap:wrap}
+.back-btn{height:32px;padding:0 12px;font-size:12px}
+.sess-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+@media(max-width:640px){.sess-grid{grid-template-columns:1fr}}
+
+/* Quality */
+.qsel{display:flex;gap:5px;margin-bottom:10px}
+.qbtn{flex:1;height:30px;border-radius:7px;border:1px solid var(--b);background:var(--s2);color:var(--t2);font-size:11px;font-family:var(--sans);cursor:pointer;transition:all .15s}
+.qbtn.active{border-color:var(--accent);background:var(--adim);color:var(--accent);font-weight:500}
+.qbtn:hover:not(.active){border-color:var(--bh);color:var(--t)}
+
+/* Audio */
+.asrc-row{display:flex;gap:6px;margin-bottom:9px}
+.asrc{flex:1;background:var(--s2);border:1px solid var(--b);border-radius:8px;padding:8px 10px;cursor:pointer;transition:all .15s;font-family:var(--sans);text-align:left}
+.asrc:hover{border-color:var(--bh)}
+.asrc.active{border-color:var(--accent);background:var(--adim)}
+.asrc .an{font-size:12px;font-weight:500;color:var(--t);display:flex;align-items:center;gap:5px;margin-bottom:2px}
+.asrc .an svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.asrc .ad{font-size:10px;color:var(--t2)}
+select{width:100%;height:34px;background:var(--s2);border:1px solid var(--b);border-radius:var(--r);color:var(--t);font-family:var(--sans);font-size:12px;padding:0 10px;cursor:pointer}
+select:focus{outline:none;border-color:var(--accent)}
+.meter{height:3px;background:var(--s3);border-radius:99px;overflow:hidden;margin-top:5px}
+.meter-bar{height:100%;border-radius:99px;background:var(--green);width:0%;transition:width .1s}
+
+/* Stats */
+.sg{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:12px}
+.sb{background:var(--s2);border-radius:8px;padding:8px 11px}
+.sl{font-size:10px;color:var(--t3);margin-bottom:1px;text-transform:uppercase;letter-spacing:.04em}
+.sv{font-size:12px;font-weight:500;color:var(--t);font-family:var(--mono)}
+.sv.ok{color:var(--green)}.sv.warn{color:var(--yellow)}
+.bww{height:3px;background:var(--s3);border-radius:99px;margin-top:5px;overflow:hidden}
+.bwb{height:100%;border-radius:99px;background:var(--green);width:0%;transition:width .5s,background .5s}
+
+/* Video */
+.vg{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.vg{grid-template-columns:1fr}}
+.vc{display:flex;flex-direction:column;gap:8px}
+.vlr{display:flex;align-items:center;justify-content:space-between}
+.vlr span{font-size:11px;color:var(--t3)}
+.vbdg{font-size:10px;padding:2px 7px;border-radius:99px}
+.bl{background:rgba(124,106,247,.15);color:var(--accent)}
+.br{background:rgba(34,197,94,.1);color:var(--green)}
+.vw{background:#07070a;border:1px solid var(--b);border-radius:var(--rl);overflow:hidden;aspect-ratio:16/9;position:relative}
+.vw video{width:100%;height:100%;object-fit:contain;display:block}
+.ve{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;color:var(--t3)}
+.ve svg{width:30px;height:30px;stroke:var(--t3);fill:none;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+.ve p{font-size:11px}
+.vovl{position:absolute;bottom:8px;left:8px;background:rgba(0,0,0,.65);backdrop-filter:blur(4px);border-radius:5px;padding:2px 7px;font-size:10px;font-family:var(--mono);color:rgba(255,255,255,.8);display:none}
+.vctl{display:flex;gap:7px}
+
+/* iOS fullscreen */
+.fso{display:none;position:fixed;inset:0;background:#000;z-index:9998;flex-direction:column}
+.fso.on{display:flex}
+.fso video{flex:1;width:100%;object-fit:contain}
+.fsbar{display:flex;align-items:center;justify-content:space-between;padding:env(safe-area-inset-top,10px) 16px 10px;background:rgba(0,0,0,.8);flex-shrink:0}
+.fsbar span{font-size:13px;color:rgba(255,255,255,.7)}
+.fscls{background:transparent;border:1px solid rgba(255,255,255,.25);border-radius:8px;color:#fff;font-size:13px;font-family:var(--sans);padding:5px 13px;cursor:pointer}
+
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(10px);background:var(--s2);border:1px solid var(--bh);color:var(--t);font-size:13px;padding:8px 18px;border-radius:99px;opacity:0;transition:all .25s;pointer-events:none;z-index:9999;white-space:nowrap}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bh);border-radius:99px}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<header>
+  <div class="brand">
+    <div class="bi"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/></svg></div>
+    <div class="bn">Private<span>Share</span></div>
+  </div>
+  <div class="ppill">
+    <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    P2P · Chiffré · Sans serveur vidéo
+  </div>
+</header>
+
+<!-- ══ PAGE HOME ══ -->
+<div id="page-home" class="page on">
+  <div class="home-wrap">
+    <h1>Partagez votre écran<br><span>en privé</span></h1>
+    <p class="sub">Un code. Une connexion directe. Jusqu'en 4K 60fps. Sans compte.</p>
+
+    <div class="home-cols">
+
+      <!-- HÔTE -->
+      <div class="home-card">
+        <div class="home-card-title">
+          <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/></svg>
+          Partager mon écran
+        </div>
+        <p>Générez un code à 6 chiffres et envoyez-le à votre correspondant.</p>
+
+        <!-- Code affiché ici une fois généré -->
+        <div id="host-code-display" style="display:none">
+          <div class="room-code">
+            <div class="label">Votre code de session</div>
+            <div class="code" id="host-code-value">------</div>
+            <div class="hint">Envoyez ce code à votre correspondant</div>
+          </div>
+          <button class="btn btsm btf mt8" onclick="copyRoomCode()">
+            <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            Copier le code
+          </button>
+          <div id="host-wait-badge" class="sbadge mt8">
+            <div class="sdot y" id="hwdot"></div>
+            <span id="hwlbl">En attente de l'invité…</span>
+          </div>
+        </div>
+
+        <button class="btn bta btf" id="btn-create" onclick="createSession()">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          Créer une session
+        </button>
+      </div>
+
+      <!-- INVITÉ -->
+      <div class="home-card">
+        <div class="home-card-title">
+          <svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+          Rejoindre une session
+        </div>
+        <p>Entrez le code à 6 chiffres reçu de l'hôte pour vous connecter.</p>
+        <input id="guest-code-input" class="inp" maxlength="6" placeholder="000000"
+          oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6)"
+          onkeydown="if(event.key==='Enter')joinSession()">
+        <button class="btn bta btf mt8" onclick="joinSession()">
+          <svg viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          Rejoindre
+        </button>
+        <div id="guest-conn-badge" class="sbadge mt8" style="display:none">
+          <div class="sdot y" id="gcdot"></div>
+          <span id="gclbl">Connexion…</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ══ PAGE SESSION ══ -->
+<div id="page-session" class="page">
+
+  <div class="sess-header">
+    <button class="btn btsm back-btn" onclick="goHome()">
+      <svg viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      Accueil
+    </button>
+    <span id="sess-label" style="font-size:13px;color:var(--t2)"></span>
+    <div class="sp"></div>
+    <div class="sbadge">
+      <div class="sdot" id="dot"></div>
+      <span id="stxt">Déconnecté</span>
+    </div>
+  </div>
+
+  <div class="sess-grid">
+
+    <!-- Contrôles (hôte uniquement) -->
+    <div class="card" id="host-panel" style="display:none">
+      <div class="lbl" style="margin-bottom:10px;font-size:13px;font-weight:500;color:var(--t)">Paramètres du partage</div>
+
+      <div class="lbl">Qualité vidéo</div>
+      <div class="qsel">
+        <button class="qbtn" id="q-hd" onclick="setQ('hd')">HD 1080p</button>
+        <button class="qbtn active" id="q-2k" onclick="setQ('2k')">2K 60fps</button>
+        <button class="qbtn" id="q-4k" onclick="setQ('4k')">4K 60fps</button>
+      </div>
+
+      <div class="lbl">Source audio</div>
+      <div class="asrc-row">
+        <button class="asrc active" id="asrc-mic" onclick="setAudio('mic')">
+          <div class="an"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>Micro</div>
+          <div class="ad">BlackHole / Loopback</div>
+        </button>
+        <button class="asrc" id="asrc-tab" onclick="setAudio('tab')">
+          <div class="an"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3z"/><path d="M3 9h18"/></svg>Onglet</div>
+          <div class="ad">Son d'un onglet Chrome</div>
+        </button>
+      </div>
+      <div id="mic-wrap">
+        <select id="mic-sel"></select>
+        <div class="meter"><div class="meter-bar" id="meter-bar"></div></div>
+        <div style="font-size:10px;color:var(--t3);margin-top:3px" id="meter-lbl">Niveau audio</div>
+      </div>
+
+      <div class="dvd"></div>
+      <button class="btn bta btf" id="btn-share" onclick="startShare()">
+        <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/></svg>
+        Démarrer le partage
+      </button>
+      <button class="btn btf mt8" id="btn-stop" onclick="stopShare()" disabled>
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+        Arrêter le partage
+      </button>
+    </div>
+
+    <!-- Statut / stats -->
+    <div class="card" id="stats-panel">
+      <div class="lbl" style="margin-bottom:10px;font-size:13px;font-weight:500;color:var(--t)">Performances</div>
+      <div class="sg">
+        <div class="sb"><div class="sl">Qualité</div><div class="sv" id="i-q">—</div></div>
+        <div class="sb"><div class="sl">Audio</div><div class="sv" id="i-audio">—</div></div>
+        <div class="sb"><div class="sl">Résolution</div><div class="sv" id="i-res">—</div></div>
+        <div class="sb"><div class="sl">FPS</div><div class="sv" id="i-fps">—</div></div>
+        <div class="sb">
+          <div class="sl">Débit</div>
+          <div class="sv" id="i-bw">—</div>
+          <div class="bww"><div class="bwb" id="bwb"></div></div>
+        </div>
+        <div class="sb"><div class="sl">Chiffrement</div><div class="sv ok">DTLS/SRTP</div></div>
+      </div>
+      <button class="btn btd btf" id="btn-disc" onclick="goHome()" disabled>
+        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        Terminer
+      </button>
+    </div>
+
+  </div>
+
+  <!-- Vidéo -->
+  <div class="card">
+    <div class="vg">
+      <div class="vc">
+        <div class="vlr"><span>Votre écran</span><span class="vbdg bl">Local</span></div>
+        <div class="vw">
+          <video id="lv" autoplay muted playsinline webkit-playsinline></video>
+          <div class="ve" id="le">
+            <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/></svg>
+            <p>Pas encore partagé</p>
+          </div>
+          <div class="vovl" id="lovl"></div>
+        </div>
+      </div>
+      <div class="vc">
+        <div class="vlr"><span>Écran distant</span><span class="vbdg br">Distant</span></div>
+        <div class="vw">
+          <video id="rv" autoplay playsinline webkit-playsinline x-webkit-airplay="allow"></video>
+          <div class="ve" id="re">
+            <svg viewBox="0 0 24 24"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.56 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+            <p>En attente</p>
+          </div>
+          <div class="vovl" id="rovl"></div>
+        </div>
+        <div class="vctl">
+          <button class="btn btf" onclick="goFS()">
+            <svg viewBox="0 0 24 24"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+            Plein écran
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /page-session -->
+</div><!-- /shell -->
+
+<!-- iOS fullscreen -->
+<div class="fso" id="fso">
+  <div class="fsbar"><span>PrivateShare</span><button class="fscls" onclick="closeFS()">✕ Fermer</button></div>
+  <video id="fsv" autoplay playsinline webkit-playsinline></video>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ══ Config ══ */
+const QUALITY={
+  hd: {w:1920,h:1080,fps:30, bps:8e6,  maxBps:12e6, label:'HD 1080p'},
+  '2k':{w:2560,h:1440,fps:60,bps:20e6, maxBps:30e6, label:'2K 60fps'},
+  '4k':{w:3840,h:2160,fps:60,bps:40e6, maxBps:60e6, label:'4K 60fps'},
+};
+
+/* ══ State ══ */
+let peer=null, conn=null, mediaConn=null;
+let localStream=null, audioStream=null, audioCtx=null, meterTimer=null, statsTimer=null;
+let audioSrc='mic', quality='2k', role='host';
+let lbR=0,lbS=0,ltS=0, roomCode=null;
+
+/* ══ Generate 6-digit code ══ */
+function genCode(){ return String(Math.floor(100000+Math.random()*900000)); }
+
+/* ══ Pages ══ */
+function showPage(id){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
+  document.getElementById(id).classList.add('on');
+}
+
+function goHome(){
+  endSession();
+  showPage('page-home');
+  document.getElementById('host-code-display').style.display='none';
+  document.getElementById('btn-create').style.display='flex';
+  document.getElementById('guest-conn-badge').style.display='none';
+  document.getElementById('guest-code-input').value='';
+  roomCode=null;
+}
+
+/* ══ HOST — Create session ══ */
+async function createSession(){
+  document.getElementById('btn-create').disabled=true;
+  document.getElementById('btn-create').textContent='Connexion…';
+
+  roomCode=genCode();
+
+  // Init PeerJS avec le code comme ID
+  peer=new Peer('ps-'+roomCode, {
+    host:'0.peerjs.com', port:443, path:'/', secure:true,
+    config:{iceServers:[
+      {urls:'stun:stun.l.google.com:19302'},
+      {urls:'stun:stun1.l.google.com:19302'},
+    ]}
+  });
+
+  peer.on('open', ()=>{
+    // Afficher le code
+    document.getElementById('host-code-value').textContent=roomCode;
+    document.getElementById('host-code-display').style.display='block';
+    document.getElementById('btn-create').style.display='none';
+    toast('Session créée — en attente de l\'invité');
+  });
+
+  peer.on('error', e=>{
+    if(e.type==='unavailable-id'){
+      // Code déjà pris — en regénérer un
+      peer.destroy();
+      createSession();
+    } else {
+      toast('Erreur : '+e.message);
+      document.getElementById('btn-create').disabled=false;
+      document.getElementById('btn-create').textContent='Créer une session';
+    }
+  });
+
+  // L'invité appelle l'hôte avec un media call
+  peer.on('call', call=>{
+    mediaConn=call;
+    call.answer(); // répondre sans flux (l'hôte envoie, l'invité reçoit)
+    call.on('stream', remoteStream=>{
+      // L'hôte ne reçoit rien normalement, mais au cas où
+    });
+    call.on('close',()=>setStatus('r','Déconnecté'));
+    call.on('error', e=>setStatus('r','Erreur'));
+  });
+
+  // Canal data pour signaux de contrôle
+  peer.on('connection', c=>{
+    conn=c;
+    c.on('open',()=>{
+      document.getElementById('hwdot').className='sdot g';
+      document.getElementById('hwlbl').textContent='Invité connecté !';
+      toast('✅ Invité connecté !');
+      // Passer en page session
+      role='host';
+      goToSession();
+    });
+    c.on('data', d=>handleData(d));
+    c.on('close',()=>setStatus('r','Déconnecté'));
+  });
+}
+
+function copyRoomCode(){
+  navigator.clipboard.writeText(roomCode).then(()=>toast('✅ Code copié !'));
+}
+
+/* ══ GUEST — Join session ══ */
+function joinSession(){
+  const code=document.getElementById('guest-code-input').value.trim();
+  if(code.length!==6){toast('Entrez un code à 6 chiffres');return}
+
+  document.getElementById('guest-conn-badge').style.display='inline-flex';
+  document.getElementById('gcdot').className='sdot y';
+  document.getElementById('gclbl').textContent='Connexion…';
+
+  peer=new Peer({
+    host:'0.peerjs.com', port:443, path:'/', secure:true,
+    config:{iceServers:[
+      {urls:'stun:stun.l.google.com:19302'},
+      {urls:'stun:stun1.l.google.com:19302'},
+    ]}
+  });
+
+  peer.on('open', guestId=>{
+    // Ouvrir canal data
+    conn=peer.connect('ps-'+code, {reliable:true});
+    conn.on('open',()=>{
+      document.getElementById('gcdot').className='sdot g';
+      document.getElementById('gclbl').textContent='Connecté !';
+      role='guest';
+      roomCode=code;
+      goToSession();
+      toast('✅ Connecté à la session');
+    });
+    conn.on('data', d=>handleData(d));
+    conn.on('error', e=>toast('Erreur connexion : '+e));
+
+    // Recevoir le flux vidéo de l'hôte
+    peer.on('call', call=>{
+      mediaConn=call;
+      call.answer();
+      call.on('stream', remote=>{
+        const rv=document.getElementById('rv');
+        rv.srcObject=remote;
+        document.getElementById('re').style.display='none';
+        document.getElementById('rovl').style.display='block';
+        setStatus('g','Flux reçu');
+        document.getElementById('btn-disc').disabled=false;
+        startStats();
+        const ha=remote.getAudioTracks().length>0;
+        const ael=document.getElementById('i-audio');
+        ael.textContent=ha?'✓ Oui':'✗ Non';ael.className='sv'+(ha?' ok':'');
+      });
+      call.on('close',()=>setStatus('r','Déconnecté'));
+    });
+  });
+
+  peer.on('error', e=>{
+    if(e.type==='peer-unavailable'){
+      toast('Code invalide ou session expirée');
+      document.getElementById('gcdot').className='sdot r';
+      document.getElementById('gclbl').textContent='Introuvable';
+    } else {
+      toast('Erreur : '+e.message);
+    }
+  });
+}
+
+/* ══ Go to session page ══ */
+function goToSession(){
+  showPage('page-session');
+  document.getElementById('sess-label').textContent=role==='host'?`Hôte · Code ${roomCode}`:`Invité · Session ${roomCode}`;
+  document.getElementById('host-panel').style.display=role==='host'?'block':'none';
+  if(role==='host'){
+    setStatus('g','Invité connecté');
+    document.getElementById('btn-disc').disabled=false;
+    loadMics();
+  }
+  document.getElementById('i-q').textContent=QUALITY[quality].label;
+}
+
+/* ══ HOST — Start sharing ══ */
+async function startShare(){
+  stopMicMeter();
+  setStatus('y','Sélection de l\'écran…');
+  try{
+    localStream=await captureMedia();
+    attachLocal(localStream);
+
+    // Appeler l'invité avec le flux
+    if(peer && conn){
+      mediaConn=peer.call(conn.peer, localStream);
+      mediaConn.on('error', e=>toast('Erreur flux : '+e));
+      setStatus('g','Partage en cours');
+      applyEncoder();
+      startStats();
+      document.getElementById('btn-disc').disabled=false;
+    }
+  }catch(err){
+    setStatus('r', friendlyErr(err));
+    toast(friendlyErr(err));
+    startMicMeter();
+  }
+}
+
+function stopShare(){
+  if(localStream){localStream.getTracks().forEach(t=>t.stop());localStream=null;}
+  document.getElementById('lv').srcObject=null;
+  document.getElementById('le').style.display='flex';
+  document.getElementById('lovl').style.display='none';
+  document.getElementById('btn-stop').disabled=true;
+  document.getElementById('btn-share').disabled=false;
+  toast('Partage arrêté');
+  startMicMeter();
+}
+
+/* ══ Capture 4K ══ */
+async function captureMedia(){
+  const q=QUALITY[quality];
+  const isChrome=navigator.userAgent.includes('Chrome');
+  const videoStream=await navigator.mediaDevices.getDisplayMedia({
+    video:{
+      width:{ideal:q.w,max:q.w},height:{ideal:q.h,max:q.h},
+      frameRate:{ideal:q.fps,max:q.fps},cursor:'always',
+      ...(isChrome?{displaySurface:'monitor',resizeMode:'none'}:{})
+    },
+    audio:audioSrc==='tab'
+  });
+
+  let audioTrack=null;
+  if(audioSrc==='tab'){
+    const at=videoStream.getAudioTracks();
+    if(at.length>0){audioTrack=at[0];toast('✅ Audio onglet capturé');}
+    else toast('⚠️ Cochez "Partager l\'audio de l\'onglet"');
+  }else{
+    try{
+      const micId=document.getElementById('mic-sel')?.value;
+      const ms=await navigator.mediaDevices.getUserMedia({
+        audio:micId?{deviceId:{exact:micId},echoCancellation:false,noiseSuppression:false,autoGainControl:false,sampleRate:48000,channelCount:2}:{echoCancellation:false,noiseSuppression:false}
+      });
+      audioTrack=ms.getAudioTracks()[0];
+      toast('✅ '+(audioTrack.label||'Audio capturé'));
+    }catch(e){toast('⚠️ Audio : '+e.message);}
+  }
+
+  const combined=new MediaStream();
+  videoStream.getVideoTracks().forEach(t=>combined.addTrack(t));
+  if(audioTrack) combined.addTrack(audioTrack);
+  return combined;
+}
+
+/* ══ Encoder params ══ */
+async function applyEncoder(){
+  if(!mediaConn?.peerConnection) return;
+  const q=QUALITY[quality];
+  for(const s of mediaConn.peerConnection.getSenders()){
+    if(!s.track||s.track.kind!=='video') continue;
+    try{
+      const p=s.getParameters();
+      if(!p.encodings?.length) p.encodings=[{}];
+      p.encodings[0].maxBitrate=q.maxBps;
+      p.encodings[0].minBitrate=q.bps;
+      p.encodings[0].maxFramerate=q.fps;
+      p.encodings[0].networkPriority='high';
+      p.encodings[0].priority='high';
+      p.degradationPreference='maintain-framerate';
+      await s.setParameters(p);
+    }catch(e){}
+  }
+}
+
+/* ══ Attach local video ══ */
+function attachLocal(stream){
+  document.getElementById('lv').srcObject=stream;
+  document.getElementById('le').style.display='none';
+  document.getElementById('btn-stop').disabled=false;
+  document.getElementById('btn-share').disabled=true;
+  const vt=stream.getVideoTracks()[0];
+  if(vt){
+    vt.onended=stopShare;
+    setTimeout(()=>{
+      const s=vt.getSettings();
+      const ovl=document.getElementById('lovl');
+      ovl.textContent=(s.width||'?')+'×'+(s.height||'?')+' · '+(Math.round(s.frameRate)||'?')+'fps';
+      ovl.style.display='block';
+    },600);
+  }
+  const ha=stream.getAudioTracks().length>0;
+  document.getElementById('i-audio').textContent=ha?'✓ Oui':'✗ Non';
+  document.getElementById('i-audio').className='sv'+(ha?' ok':'');
+}
+
+/* ══ Quality ══ */
+function setQ(q){
+  quality=q;
+  ['hd','2k','4k'].forEach(k=>document.getElementById('q-'+k).classList.toggle('active',k===q));
+  document.getElementById('i-q').textContent=QUALITY[q].label;
+  if(mediaConn) applyEncoder();
+}
+
+/* ══ Audio ══ */
+function setAudio(src){
+  audioSrc=src;
+  document.getElementById('asrc-mic').classList.toggle('active',src==='mic');
+  document.getElementById('asrc-tab').classList.toggle('active',src==='tab');
+  document.getElementById('mic-wrap').style.display=src==='mic'?'block':'none';
+  src==='mic'?startMicMeter():stopMicMeter();
+}
+
+async function loadMics(){
+  try{
+    const tmp=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    tmp.getTracks().forEach(t=>t.stop());
+    const devs=await navigator.mediaDevices.enumerateDevices();
+    const mics=devs.filter(d=>d.kind==='audioinput');
+    const sel=document.getElementById('mic-sel');
+    sel.innerHTML=mics.map(m=>`<option value="${m.deviceId}">${m.label||'Micro '+m.deviceId.slice(0,8)}</option>`).join('');
+    const bh=mics.find(m=>/blackhole|loopback/i.test(m.label));
+    if(bh){sel.value=bh.deviceId;toast('🎵 BlackHole détecté !');}
+    sel.onchange=startMicMeter;
+    startMicMeter();
+  }catch(e){document.getElementById('mic-sel').innerHTML='<option>Permission refusée</option>';}
+}
+
+async function startMicMeter(){
+  stopMicMeter();
+  if(audioSrc!=='mic') return;
+  const micId=document.getElementById('mic-sel')?.value;
+  if(!micId) return;
+  try{
+    audioStream=await navigator.mediaDevices.getUserMedia({
+      audio:{deviceId:{exact:micId},echoCancellation:false,noiseSuppression:false,autoGainControl:false}
+    });
+    audioCtx=new AudioContext();
+    const src=audioCtx.createMediaStreamSource(audioStream);
+    const an=audioCtx.createAnalyser();an.fftSize=256;src.connect(an);
+    const data=new Uint8Array(an.frequencyBinCount);
+    meterTimer=setInterval(()=>{
+      an.getByteFrequencyData(data);
+      const avg=data.reduce((a,b)=>a+b,0)/data.length;
+      const pct=Math.min(100,avg*2.2);
+      const bar=document.getElementById('meter-bar');
+      if(bar){bar.style.width=pct+'%';bar.style.background=pct>65?'var(--red)':pct>30?'var(--yellow)':'var(--green)';}
+      const lbl=document.getElementById('meter-lbl');
+      if(lbl){lbl.textContent=pct>5?'🎵 Signal détecté':'Silence…';lbl.style.color=pct>5?'var(--green)':'var(--t3)';}
+    },80);
+  }catch(e){}
+}
+function stopMicMeter(){
+  clearInterval(meterTimer);
+  if(audioStream){audioStream.getTracks().forEach(t=>t.stop());audioStream=null;}
+  if(audioCtx){audioCtx.close();audioCtx=null;}
+}
+
+/* ══ End session ══ */
+function endSession(){
+  clearInterval(statsTimer);
+  stopShare();
+  stopMicMeter();
+  if(mediaConn){mediaConn.close();mediaConn=null;}
+  if(conn){conn.close();conn=null;}
+  if(peer){peer.destroy();peer=null;}
+  document.getElementById('rv').srcObject=null;
+  document.getElementById('re').style.display='flex';
+  document.getElementById('rovl').style.display='none';
+  document.getElementById('btn-disc').disabled=true;
+  ['i-res','i-fps','i-bw'].forEach(id=>document.getElementById(id).textContent='—');
+  document.getElementById('bwb').style.width='0';
+  lbR=0;lbS=0;ltS=0;
+  setStatus('','Déconnecté');
+}
+
+/* ══ Data channel ══ */
+function handleData(d){
+  if(d.type==='ping') conn?.send({type:'pong'});
+}
+
+/* ══ Stats ══ */
+function startStats(){
+  clearInterval(statsTimer);ltS=performance.now();
+  const pc=mediaConn?.peerConnection;
+  if(!pc) return;
+  statsTimer=setInterval(async()=>{
+    const now=performance.now(),dt=(now-ltS)/1000;ltS=now;
+    const stats=await pc.getStats();
+    stats.forEach(r=>{
+      if(r.type==='inbound-rtp'&&r.kind==='video'){
+        if(r.frameWidth){
+          document.getElementById('i-res').textContent=r.frameWidth+'×'+r.frameHeight;
+          document.getElementById('rovl').textContent=r.frameWidth+'×'+r.frameHeight+' · '+Math.round(r.framesPerSecond||0)+'fps';
+        }
+        document.getElementById('i-fps').textContent=Math.round(r.framesPerSecond||0)+' fps';
+        const b=r.bytesReceived||0;if(lbR>0&&dt>0)setBW((b-lbR)*8/dt);lbR=b;
+      }
+      if(r.type==='outbound-rtp'&&r.kind==='video'){
+        const b=r.bytesSent||0;if(lbS>0&&dt>0)setBW((b-lbS)*8/dt);lbS=b;
+      }
+    });
+  },1500);
+}
+function setBW(bps){
+  const mbps=bps/1e6;
+  document.getElementById('i-bw').textContent=mbps.toFixed(1)+' Mbps';
+  const pct=Math.min(100,mbps/(QUALITY[quality].maxBps/1e6)*100);
+  document.getElementById('bwb').style.width=pct+'%';
+  document.getElementById('bwb').style.background=pct<40?'var(--green)':pct<75?'var(--yellow)':'var(--red)';
+}
+
+/* ══ Fullscreen iOS ══ */
+function goFS(){
+  const rv=document.getElementById('rv');
+  const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  if(isIOS){if(rv.webkitEnterFullscreen){rv.webkitEnterFullscreen();return;}openFSO(rv);return;}
+  const fn=rv.requestFullscreen||rv.webkitRequestFullscreen||rv.mozRequestFullScreen||rv.msRequestFullscreen;
+  if(fn) fn.call(rv).catch(()=>openFSO(rv));
+}
+function openFSO(src){
+  const fv=document.getElementById('fsv');fv.srcObject=src.srcObject;
+  document.getElementById('fso').classList.add('on');document.body.style.overflow='hidden';fv.play().catch(()=>{});
+}
+function closeFS(){
+  document.getElementById('fso').classList.remove('on');document.body.style.overflow='';document.getElementById('fsv').srcObject=null;
+}
+window.addEventListener('orientationchange',()=>{if(document.getElementById('fso').classList.contains('on')&&window.orientation===0)closeFS();});
+
+/* ══ Helpers ══ */
+function setStatus(c,t){document.getElementById('dot').className='sdot'+(c?' '+c:'');document.getElementById('stxt').textContent=t;}
+function friendlyErr(e){if(e.name==='NotAllowedError')return 'Permission refusée';if(e.name==='NotFoundError')return 'Aucun écran à capturer';return e.message;}
+function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(el._t);el._t=setTimeout(()=>el.classList.remove('show'),3500);}
+</script>
+</body>
+</html>
