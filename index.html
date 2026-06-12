@@ -534,12 +534,15 @@ async function startShare(){
     localStream=await captureMedia();
     attachLocal(localStream);
 
-    // Appeler l'invité avec le flux
     if(peer && conn){
       mediaConn=peer.call(conn.peer, localStream);
       mediaConn.on('error', e=>toast('Erreur flux : '+e));
+
+      // Intercepter le SDP dès que la PeerConnection est créée
+      // pour forcer la résolution et le bitrate avant négociation
+      patchPeerConnection(mediaConn);
+
       setStatus('g','Partage en cours');
-      applyEncoder();
       startStats();
       document.getElementById('btn-disc').disabled=false;
     }
@@ -547,6 +550,111 @@ async function startShare(){
     setStatus('r', friendlyErr(err));
     toast(friendlyErr(err));
     startMicMeter();
+  }
+}
+
+/* ══ Patch PeerConnection — force 4K dans le SDP ══ */
+function patchPeerConnection(mc){
+  // Attendre que PeerJS crée le RTCPeerConnection interne
+  const waitPC=setInterval(()=>{
+    const pc=mc.peerConnection;
+    if(!pc) return;
+    clearInterval(waitPC);
+
+    // 1. Intercepter createOffer/createAnswer pour modifier le SDP
+    const origSetLD=pc.setLocalDescription.bind(pc);
+    pc.setLocalDescription=async(desc)=>{
+      if(desc && desc.sdp){
+        desc=new RTCSessionDescription({type:desc.type, sdp:patchSDP(desc.sdp)});
+      }
+      return origSetLD(desc);
+    };
+
+    // 2. Appliquer les contraintes sur la piste vidéo capturée
+    const q=QUALITY[quality];
+    if(localStream){
+      const vt=localStream.getVideoTracks()[0];
+      if(vt){
+        vt.applyConstraints({
+          width:{ideal:q.w,max:q.w},
+          height:{ideal:q.h,max:q.h},
+          frameRate:{ideal:q.fps,max:q.fps}
+        }).catch(()=>{});
+      }
+    }
+
+    // 3. Forcer les paramètres d'encodage dès que la connexion est établie
+    pc.addEventListener('connectionstatechange',()=>{
+      if(pc.connectionState==='connected'){
+        applyEncoderOnPC(pc);
+        // Réappliquer après 1s et 3s pour être sûr
+        setTimeout(()=>applyEncoderOnPC(pc),1000);
+        setTimeout(()=>applyEncoderOnPC(pc),3000);
+      }
+    });
+  },50);
+}
+
+/* ══ Modifier le SDP pour forcer haute résolution ══ */
+function patchSDP(sdp){
+  const q=QUALITY[quality];
+  // Supprimer les lignes b=AS et b=TIAS existantes (bitrate limité par PeerJS)
+  sdp=sdp.replace(/b=AS:[0-9]+\r\n/g,'');
+  sdp=sdp.replace(/b=TIAS:[0-9]+\r\n/g,'');
+
+  // Injecter le bitrate max après la ligne m=video
+  const bAS=Math.round(q.maxBps/1000); // kbps
+  const bTIAS=q.maxBps; // bps
+  sdp=sdp.replace(/(m=video[^\r\n]*\r\n)/,(match)=>{
+    return match+`b=AS:${bAS}\r\nb=TIAS:${bTIAS}\r\n`;
+  });
+
+  // Ajouter max-fr et max-fs dans les fmtp pour VP8/VP9/H264
+  // max-fs = macroblocks (4K = 3840*2160/256 = 32400)
+  const maxFS=Math.ceil((q.w*q.h)/256);
+  const maxFR=q.fps;
+  sdp=sdp.replace(/(a=fmtp:\d+ )(.*)/g,(match,prefix,params)=>{
+    if(params.includes('max-fs')){
+      params=params.replace(/max-fs=\d+/,`max-fs=${maxFS}`);
+    } else {
+      params+=`;max-fs=${maxFS}`;
+    }
+    if(params.includes('max-fr')){
+      params=params.replace(/max-fr=\d+/,`max-fr=${maxFR}`);
+    } else {
+      params+=`;max-fr=${maxFR}`;
+    }
+    return prefix+params;
+  });
+
+  return sdp;
+}
+
+/* ══ Forcer les paramètres d'encodage sur un RTCPeerConnection ══ */
+async function applyEncoderOnPC(pc){
+  const q=QUALITY[quality];
+  for(const sender of pc.getSenders()){
+    if(!sender.track||sender.track.kind!=='video') continue;
+    try{
+      const params=sender.getParameters();
+      if(!params.encodings||params.encodings.length===0) params.encodings=[{}];
+      params.encodings[0].maxBitrate    = q.maxBps;
+      params.encodings[0].maxFramerate  = q.fps;
+      params.encodings[0].networkPriority = 'high';
+      params.encodings[0].priority       = 'high';
+      // Ne pas mettre minBitrate — certains navigateurs rejettent
+      if('degradationPreference' in params){
+        params.degradationPreference = 'maintain-framerate';
+      }
+      await sender.setParameters(params);
+
+      // Forcer aussi les contraintes sur la piste elle-même
+      await sender.track.applyConstraints({
+        width:{ideal:q.w,max:q.w},
+        height:{ideal:q.h,max:q.h},
+        frameRate:{ideal:q.fps,max:q.fps}
+      }).catch(()=>{});
+    }catch(e){}
   }
 }
 
@@ -598,22 +706,7 @@ async function captureMedia(){
 
 /* ══ Encoder params ══ */
 async function applyEncoder(){
-  if(!mediaConn?.peerConnection) return;
-  const q=QUALITY[quality];
-  for(const s of mediaConn.peerConnection.getSenders()){
-    if(!s.track||s.track.kind!=='video') continue;
-    try{
-      const p=s.getParameters();
-      if(!p.encodings?.length) p.encodings=[{}];
-      p.encodings[0].maxBitrate=q.maxBps;
-      p.encodings[0].minBitrate=q.bps;
-      p.encodings[0].maxFramerate=q.fps;
-      p.encodings[0].networkPriority='high';
-      p.encodings[0].priority='high';
-      p.degradationPreference='maintain-framerate';
-      await s.setParameters(p);
-    }catch(e){}
-  }
+  if(mediaConn?.peerConnection) applyEncoderOnPC(mediaConn.peerConnection);
 }
 
 /* ══ Attach local video ══ */
@@ -642,7 +735,17 @@ function setQ(q){
   quality=q;
   ['hd','2k','4k'].forEach(k=>document.getElementById('q-'+k).classList.toggle('active',k===q));
   document.getElementById('i-q').textContent=QUALITY[q].label;
-  if(mediaConn) applyEncoder();
+  const qc=QUALITY[q];
+  // Appliquer sur la piste live si déjà en partage
+  if(localStream){
+    const vt=localStream.getVideoTracks()[0];
+    if(vt) vt.applyConstraints({
+      width:{ideal:qc.w,max:qc.w},
+      height:{ideal:qc.h,max:qc.h},
+      frameRate:{ideal:qc.fps,max:qc.fps}
+    }).catch(()=>{});
+  }
+  if(mediaConn?.peerConnection) applyEncoderOnPC(mediaConn.peerConnection);
 }
 
 /* ══ Audio ══ */
